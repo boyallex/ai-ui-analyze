@@ -39,4 +39,17 @@ Thumbs.db
 analytics/
 page_designs/
 data/
-*.log 
+*.log
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Database
+*.db
+*.sqlite3
+
+# Credentials
+*credentials*.json
+*key*.json
