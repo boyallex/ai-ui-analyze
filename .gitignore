@@ -50,6 +50,10 @@ data/
 *.db
 *.sqlite3
 
-# Credentials
+# Secrets and credentials
+.env
+firebase-credentials.json
 *credentials*.json
+*secret*.json
 *key*.json
+*api*.json
