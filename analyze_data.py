@@ -8,6 +8,7 @@ from datetime import datetime
 from transformers import pipeline, AutoModelForCausalLM, AutoTokenizer
 from typing import List, Dict
 from collections import defaultdict
+import openai
 
 def create_heatmap(coordinates: list, screen_size: dict) -> np.ndarray:
     """Создает тепловую карту на основе координат кликов"""
@@ -63,72 +64,59 @@ def create_heatmap(coordinates: list, screen_size: dict) -> np.ndarray:
             heatmap = heatmap / heatmap.max()
         return heatmap
 
-class LocalAnalyzer:
-    def __init__(self):
-        # Используем русскоязычную GPT модель от Сбера
-        self.model_name = "sberbank-ai/rugpt3small_based_on_gpt2"
-        print("Загрузка модели...")
-        try:
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-            self.model = AutoModelForCausalLM.from_pretrained(self.model_name)
-            print("Модель успешно загружена")
-        except Exception as e:
-            print(f"Ошибка при загрузке модели: {e}")
-            raise
+class OpenAIAnalyzer:
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.client = openai.OpenAI(api_key=api_key)
+        print("Инициализация OpenAI API...")
         
     def get_response(self, prompt: str) -> str:
-        """Получение ответа от локальной модели"""
+        """Получение ответа от ChatGPT"""
         try:
-            print("Подготовка промпта для нейросети...")
+            print("Подготовка промпта для ChatGPT...")
             
             # Подготавливаем промпт
-            system_prompt = """Ты опытный продукт-менеджер и UX-аналитик. 
-            Проанализируй данные о кликах пользователей и дай рекомендации по улучшению интерфейса.
-            Учитывай следующие аспекты:
-            1. Распределение кликов по экрану
-            2. Паттерны навигации
-            3. Время пребывания на экране
-            4. Последовательность действий
-            5. Потенциальные проблемы UX
-            6. Конкретные рекомендации по улучшению
+            system_prompt = """Ты опытный UX-аналитик. Проанализируй данные о взаимодействии пользователей с интерфейсом и дай рекомендации.
+
+Данные содержат информацию о:
+1. Количестве кликов на каждом экране
+2. Времени, проведенном на экране
+3. Количестве посещений
+4. Навигационных паттернах (откуда пришли, куда ушли)
+5. Координатах кликов
+
+Пожалуйста, проанализируй эти данные и дай рекомендации в следующем формате:
+
+ОБЩИЙ АНАЛИЗ:
+- Опиши основные паттерны использования
+- Выдели ключевые метрики
+- Отметь необычные паттерны
+
+ПРОБЛЕМНЫЕ МЕСТА:
+- Укажи экраны с низкой эффективностью
+- Отметь места, где пользователи тратят много времени
+- Выдели проблемные навигационные паттерны
+
+РЕКОМЕНДАЦИИ:
+- Дай конкретные рекомендации по улучшению
+- Предложи изменения в навигации
+- Укажи, где можно оптимизировать интерфейс
+
+Используй простой язык и конкретные примеры. Избегай общих фраз."""
             
-            Дай структурированный ответ с разделами:
-            - Общий анализ
-            - Паттерны взаимодействия
-            - Проблемные места
-            - Рекомендации по улучшению
-            """
-            
-            full_prompt = f"{system_prompt}\n\nДанные:\n{prompt}\n\nАнализ:"
-            print("Промпт подготовлен")
-            
-            # Токенизируем и генерируем ответ
-            print("Токенизация входных данных...")
-            inputs = self.tokenizer.encode(full_prompt, return_tensors="pt", max_length=512, truncation=True)
-            print(f"Размер входных токенов: {inputs.shape}")
-            
-            print("Генерация ответа...")
-            outputs = self.model.generate(
-                inputs,
-                max_length=1024,
-                num_return_sequences=1,
+            print("Отправка запроса к ChatGPT...")
+            response = self.client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Данные для анализа:\n{prompt}"}
+                ],
                 temperature=0.7,
-                top_p=0.9,
-                do_sample=True,
-                pad_token_id=self.tokenizer.eos_token_id
+                max_tokens=1000
             )
-            print("Ответ сгенерирован")
             
-            # Декодируем ответ
-            print("Декодирование ответа...")
-            response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-            
-            # Извлекаем только часть после "Анализ:"
-            if "Анализ:" in response:
-                response = response.split("Анализ:")[1].strip()
-            
-            print("Ответ успешно получен")
-            return response
+            print("Ответ получен от ChatGPT")
+            return response.choices[0].message.content
                 
         except Exception as e:
             error_msg = f"Ошибка при анализе: {str(e)}"
@@ -242,7 +230,7 @@ def analyze_with_gpt(report: str, api_key: str = None):
         
         # Создаем экземпляр анализатора
         print("Создание экземпляра анализатора...")
-        analyzer = LocalAnalyzer()
+        analyzer = OpenAIAnalyzer(api_key)
         
         # Формируем данные для анализа
         analysis_data = {
@@ -318,14 +306,12 @@ def load_all_heatmaps(data_folder: str) -> List[Dict]:
     print(f"\nВсего загружено {len(sorted_heatmaps)} heatmap файлов")
     return sorted_heatmaps
 
-def analyze_user_journey(heatmaps: List[Dict]) -> str:
+def analyze_user_journey(heatmaps: List[Dict], api_key: str) -> str:
     """Анализирует полный путь пользователя по приложению"""
     if not heatmaps:
         return "Нет данных о взаимодействии пользователя с приложением."
     
     print("\n=== Начало анализа пути пользователя ===")
-    analysis = []
-    analysis.append("Анализ полного пути пользователя по приложению:\n")
     
     # Собираем статистику по экранам
     screen_stats = defaultdict(lambda: {
@@ -337,132 +323,62 @@ def analyze_user_journey(heatmaps: List[Dict]) -> str:
         'click_coordinates': []
     })
     
-    print("\nСбор статистики по экранам...")
     # Анализируем последовательность действий
     for i, heatmap in enumerate(heatmaps):
         screen_name = heatmap['pageName']
-        print(f"\nОбработка экрана {screen_name}:")
         stats = screen_stats[screen_name]
         
         # Обновляем статистику
         stats['clicks'] += len(heatmap['points'])
         stats['visits'] += 1
         stats['click_coordinates'].extend(heatmap['points'])
-        print(f"- Добавлено {len(heatmap['points'])} кликов")
         
         if 'navigation' in heatmap:
             nav = heatmap['navigation']
             stats['time_spent'] += nav.get('time_spent', 0)
             if 'previous_screen' in nav:
                 stats['from_screens'].add(nav['previous_screen'])
-                print(f"- Добавлен переход с экрана: {nav['previous_screen']}")
             if 'next_screen' in nav:
                 stats['to_screens'].add(nav['next_screen'])
-                print(f"- Добавлен переход на экран: {nav['next_screen']}")
-    
-    print("\nФормирование анализа...")
-    # Анализ последовательности экранов
-    analysis.append("Последовательность посещения экранов:")
-    for i, heatmap in enumerate(heatmaps):
-        screen_name = heatmap['pageName']
-        nav = heatmap.get('navigation', {})
-        prev_screen = nav.get('previous_screen', 'Начало сессии')
-        next_screen = nav.get('next_screen', 'Конец сессии')
-        
-        analysis.append(f"\n{i+1}. {screen_name}:")
-        analysis.append(f"   - Пришел с: {prev_screen}")
-        analysis.append(f"   - Ушел на: {next_screen}")
-        analysis.append(f"   - Кликов: {len(heatmap['points'])}")
-        if 'navigation' in heatmap and 'time_spent' in heatmap['navigation']:
-            analysis.append(f"   - Время на экране: {heatmap['navigation']['time_spent']:.1f} сек")
-    
-    # Анализ паттернов использования
-    analysis.append("\nПаттерны использования:")
     
     # Находим наиболее посещаемые экраны
     most_visited = sorted(screen_stats.items(), key=lambda x: x[1]['visits'], reverse=True)
-    analysis.append("\nНаиболее посещаемые экраны:")
-    for screen, stats in most_visited:
-        analysis.append(f"- {screen}: {stats['visits']} посещений, {stats['clicks']} кликов")
     
     # Находим экраны с наибольшим временем пребывания
     most_time = sorted(screen_stats.items(), key=lambda x: x[1]['time_spent'], reverse=True)
-    analysis.append("\nЭкраны с наибольшим временем пребывания:")
-    for screen, stats in most_time:
-        if stats['time_spent'] > 0:
-            analysis.append(f"- {screen}: {stats['time_spent']:.1f} секунд")
     
-    # Анализ навигационных паттернов
-    analysis.append("\nНавигационные паттерны:")
-    for screen, stats in screen_stats.items():
-        if stats['from_screens'] or stats['to_screens']:
-            analysis.append(f"\n{screen}:")
-            if stats['from_screens']:
-                analysis.append(f"- Пользователи приходят с: {', '.join(stats['from_screens'])}")
-            if stats['to_screens']:
-                analysis.append(f"- Пользователи уходят на: {', '.join(stats['to_screens'])}")
-    
-    print("\nГенерация рекомендаций...")
-    # Рекомендации
-    analysis.append("\nРекомендации:")
-    
-    # Анализируем быстрые переходы
-    for screen, stats in screen_stats.items():
-        if stats['time_spent'] > 0 and stats['time_spent'] < 5:
-            analysis.append(f"- Пользователи быстро покидают экран {screen}. Возможно, стоит упростить навигацию или улучшить контент.")
-    
-    # Анализируем частые возвраты
-    for screen, stats in screen_stats.items():
-        if len(stats['from_screens']) > 2:
-            analysis.append(f"- Пользователи часто возвращаются на экран {screen}. Возможно, стоит оптимизировать навигацию или добавить быстрый доступ к часто используемым функциям.")
-    
-    # Анализируем распределение кликов
-    for screen, stats in screen_stats.items():
-        if stats['clicks'] > 0:
-            print(f"\nАнализ кликов для экрана {screen}:")
-            # Анализируем концентрацию кликов
-            x_coords = [p['x'] for p in stats['click_coordinates']]
-            y_coords = [p['y'] for p in stats['click_coordinates']]
-            
-            if x_coords and y_coords:
-                avg_x = sum(x_coords) / len(x_coords)
-                avg_y = sum(y_coords) / len(y_coords)
-                print(f"- Средние координаты: x={avg_x:.1f}, y={avg_y:.1f}")
-                
-                # Определяем зоны концентрации кликов
-                if avg_y < 300:  # Верхняя часть экрана
-                    analysis.append(f"- На экране {screen} большинство кликов происходит в верхней части. Возможно, стоит разместить важные элементы управления в этой области.")
-                elif avg_y > 600:  # Нижняя часть экрана
-                    analysis.append(f"- На экране {screen} большинство кликов происходит в нижней части. Рекомендуется разместить основные элементы управления внизу экрана.")
-                
-                if avg_x < 150:  # Левая часть экрана
-                    analysis.append(f"- На экране {screen} большинство кликов происходит в левой части. Возможно, стоит оптимизировать расположение элементов меню.")
-                elif avg_x > 250:  # Правая часть экрана
-                    analysis.append(f"- На экране {screen} большинство кликов происходит в правой части. Рекомендуется разместить важные элементы управления справа.")
-    
-    # Добавляем общие рекомендации
-    analysis.append("\nОбщие рекомендации:")
-    
-    # Рекомендации на основе времени пребывания
+    # Подготавливаем данные для нейросети
     total_time = sum(stats['time_spent'] for stats in screen_stats.values())
-    if total_time > 0:
-        for screen, stats in screen_stats.items():
-            if stats['time_spent'] > 0:
-                time_percentage = (stats['time_spent'] / total_time) * 100
-                if time_percentage > 50:
-                    analysis.append(f"- Пользователи проводят {time_percentage:.1f}% времени на экране {screen}. Рекомендуется оптимизировать этот экран для повышения эффективности.")
-    
-    # Рекомендации на основе количества кликов
     total_clicks = sum(stats['clicks'] for stats in screen_stats.values())
-    if total_clicks > 0:
-        for screen, stats in screen_stats.items():
-            if stats['clicks'] > 0:
-                click_percentage = (stats['clicks'] / total_clicks) * 100
-                if click_percentage > 30:
-                    analysis.append(f"- На экране {screen} происходит {click_percentage:.1f}% всех кликов. Возможно, стоит упростить интерфейс этого экрана.")
     
-    print("\n=== Анализ пути пользователя завершен ===")
-    return "\n".join(analysis)
+    # Добавляем анализ с помощью ChatGPT
+    print("\nЗапуск анализа с помощью ChatGPT...")
+    try:
+        analyzer = OpenAIAnalyzer(api_key)
+        # Подготавливаем данные для анализа
+        ai_analysis_data = {
+            'screen_stats': {k: {
+                'clicks': v['clicks'],
+                'time_spent': v['time_spent'],
+                'visits': v['visits'],
+                'from_screens': list(v['from_screens']),
+                'to_screens': list(v['to_screens']),
+                'click_coordinates': v['click_coordinates']
+            } for k, v in screen_stats.items()},
+            'total_time': total_time,
+            'total_clicks': total_clicks,
+            'most_visited': [(k, {'visits': v['visits'], 'clicks': v['clicks']}) for k, v in most_visited],
+            'most_time': [(k, {'time_spent': v['time_spent']}) for k, v in most_time]
+        }
+        
+        # Получаем рекомендации от ChatGPT
+        ai_recommendations = analyzer.get_response(json.dumps(ai_analysis_data, indent=2))
+        
+        return ai_recommendations
+        
+    except Exception as e:
+        print(f"Ошибка при анализе ChatGPT: {e}")
+        return "Не удалось получить рекомендации от ChatGPT."
 
 def analyze_data(tag: str = None, designs_folder: str = "page_designs", data_folder: str = "data/consilium", gpt_api_key: str = None) -> str:
     """Анализирует данные о кликах и создает тепловую карту и маску полезных зон"""
@@ -474,6 +390,8 @@ def analyze_data(tag: str = None, designs_folder: str = "page_designs", data_fol
             os.makedirs(designs_folder)
         if not os.path.exists(data_folder):
             os.makedirs(data_folder)
+        if not os.path.exists("analytics"):
+            os.makedirs("analytics")
 
         # Загружаем все heatmap
         print(f"Загрузка данных из директории: {data_folder}")
@@ -503,7 +421,7 @@ def analyze_data(tag: str = None, designs_folder: str = "page_designs", data_fol
         
         # Анализируем полный путь пользователя
         print("\nАнализ пути пользователя...")
-        analysis = analyze_user_journey(heatmaps)
+        analysis = analyze_user_journey(heatmaps, gpt_api_key)
         
         # Создаем тепловые карты для каждого экрана
         heatmap_results = []
@@ -538,6 +456,16 @@ def analyze_data(tag: str = None, designs_folder: str = "page_designs", data_fol
         # Формируем полный отчет
         full_report = f"""=== Аналитика ===\n\n{analysis}\n\n=== Тепловые карты ===\n\n{chr(10).join(heatmap_results)}"""
         
+        # Сохраняем отчет в файл
+        if tag:
+            report_file = os.path.join("analytics", f"{tag}_analysis.txt")
+        else:
+            report_file = os.path.join("analytics", "overall_analysis.txt")
+            
+        with open(report_file, 'w', encoding='utf-8') as f:
+            f.write(full_report)
+        
+        print(f"\nОтчет сохранен в файл: {report_file}")
         print("\n=== Анализ завершен ===\n")
         return full_report
 
