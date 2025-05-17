@@ -33,26 +33,6 @@ class UIData(BaseModel):
     screenshot_base64: str
     timestamp: Optional[float] = None
 
-class PageDesign(BaseModel):
-    page_id: str
-    design_name: str
-    user_id: str
-
-class HeatmapPoint(BaseModel):
-    x: float
-    y: float
-    timestamp: datetime
-    user_id: str
-
-class HeatmapData(BaseModel):
-    pageId: str
-    pageName: str
-    points: List[HeatmapPoint]
-    screenSize: Dict[str, int]
-    designImageUrl: Optional[str] = None
-    createdAt: datetime
-    updatedAt: datetime
-
 class Database:
     def __init__(self, db_path: str = "analytics.db"):
         self.db_path = db_path
